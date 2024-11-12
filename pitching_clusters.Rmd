@@ -1,0 +1,250 @@
+---
+title: "Cluster_Analysis"
+author: "Andrew Shin"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(baseballr)
+library(dplyr)
+library(ggplot2)
+library(cluster) # for silhouette scores
+library(factoextra)
+library(gridExtra)
+```
+Pitch movement has become a critical metric for analyzing a pitcher’s repertoire, as it reveals distinct clusters of pitch types when visualized on an x-y plane. In this context, the x-axis represents the degree of induced vertical break, and the y-axis represents the degree of induced horizontal break. Induced pitch movement describes the deviation of a baseball’s trajectory from a straight path, primarily influenced by spin, speed, and aerodynamic forces as the ball travels toward the plate. This analysis disregards gravitational effects on the ball’s movement, focusing exclusively on the impact of spin and velocity.
+
+Observing clusters on the 2D movement plane sparked the idea that clustering algorithms could be applied to classify pitch types based on features closely related to movement. Using the k-means clustering algorithm, I found that it effectively captured the natural grouping of pitch types according to their movement characteristics. This approach not only highlights the inherent distinctions in pitch types but also offers a data-driven method for identifying patterns in a pitcher’s arsenal. Furthermore, I believe that dimensionality reduction techniques, such as principal component analysis (PCA), could further enhance these clusters by refining the key features that differentiate pitches, allowing for even more insightful analysis.This approach enables more comprehensive comparisons between players, allowing teams to identify pitchers with similar profiles. This is because the two principal components obtained from PCA represent a combination of crucial features, capturing both pitch movement and additional pitching data on a single 2D plane. In contrast, the pitch movement plane reflects only the movement aspect of each pitch.
+
+I have chosen Hyun-Jin Ryu, who used to be my role model when I had a dream of baseball player, for cluster analysis, and picked similar players based on velocity and movement obtained from MLB Statcast. 
+
+```{r, include=FALSE}
+pitcher_id <- 547943
+pitch_data <- statcast_search_pitchers(start_date = "2021-03-01",
+                                                   end_date = "2021-12-01",
+                                                   pitcherid = pitcher_id)
+movement_data <- pitch_data %>% select(game_type, pitcher, player_name, pitch_name, spin_axis,
+                                          release_speed, release_spin_rate, pfx_x, pfx_z)
+
+
+movement_data <- movement_data %>% filter(!is.na(pfx_x), !is.na(pfx_z), 
+                                          !is.na(release_speed), !is.na(release_spin_rate),
+                                          !is.na(pitch_name), !is.na(spin_axis), game_type == "R") %>% 
+  mutate(pfx_x_in_pv = -12*pfx_x, pfx_z_in = 12*pfx_z)
+```
+
+```{r, include=FALSE}
+pitch_data_100 <- statcast_search(start_date = "2021-03-01", end_date = "2021-12-01")
+
+pitcher_ids <- c(
+114680, 116539, 124348, 118432, 118432, 120000, 114680,
+429719, 112526, 434718, 453311, 400121, 118377, 112388, 118120, 121365, 122110,
+518774, 605200, 543548, 502239, 571946, 456701, 467100, 527054, 434671, 433587,
+605200, 453562, 605288, 605200, 605200, 621107, 543339, 543475, 502042, 605200,
+543606, 592314, 607192, 663903, 664353, 605200, 669203, 663978, 664353, 605151,
+543243, 605400, 605452, 643256, 641540, 666142, 622694, 605288, 641745, 664141,
+592791, 608379, 668676, 543243, 664353, 623167, 608348, 666159, 666120, 622491,
+605135, 643261, 642547, 664353, 543135, 592836, 502043, 666120, 621381, 641816,
+425794, 621121, 543101, 605397, 645261, 543037, 450203, 489119, 608648, 621244,
+605173, 453286, 621111, 621056, 554430, 592332, 592662, 628711, 573186, 608331,
+547943, 543594, 656457)
+
+filtered_data <- pitch_data_100 %>% filter(pitcher %in% pitcher_ids)
+movement_data_100 <- filtered_data %>% select(game_type, pitcher, player_name, pitch_name, spin_axis,
+                                          release_speed, release_spin_rate, pfx_x, pfx_z)
+
+movement_data_100 <- movement_data_100 %>% filter(!is.na(pfx_x), !is.na(pfx_z), 
+                                          !is.na(release_speed), !is.na(release_spin_rate),
+                                          !is.na(pitch_name), !is.na(spin_axis), game_type == "R") %>% 
+  mutate(pfx_x_in_pv = -12*pfx_x, pfx_z_in = 12*pfx_z)
+```
+
+```{r, include=TRUE}
+movement_data%>% group_by(pitch_name) %>% summarise(count = n()) %>% 
+  mutate(percentage = (count / sum(count)) * 100)
+```
+
+```{r}
+excluded_pitches <- c("Slider", "Sinker") 
+movement_data <- movement_data %>% filter(!pitch_name %in% excluded_pitches)
+
+ryu_pitch_types <- unique(movement_data$pitch_name)
+
+ryu_pitch_plot <- movement_data %>% 
+  ggplot(ggplot2::aes(x = pfx_x_in_pv, y = pfx_z_in, color = pitch_name)) +
+  geom_vline(xintercept = 0) +
+  geom_hline(yintercept = 0) +
+  geom_point(size = 1.5, alpha = 1) +
+  scale_color_manual(values = pitch_colors,
+                              limits = ryu_pitch_types) +
+  scale_x_continuous(limits = c(-25,25),
+                              breaks = seq(-20,20, 5),
+                              labels = scales::number_format(suffix = "\"")) +
+  scale_y_continuous(limits = c(-25,25),
+                              breaks = seq(-20,20, 5),
+                              labels = scales::number_format(suffix = "\"")) +
+  coord_equal() +
+  labs(title = "Hyun-Jin Ryu Pitch Movement",
+                subtitle = "2021 MLB Season | Pitcher's POV",
+                caption = "Data: Baseball Savant via baseballr", 
+                x = "Horizontal Break",
+                y = "Induced Vertical Break",
+                color = "Pitch Name")
+
+ggsave("ryu_pitch_plot.png", plot = ryu_pitch_plot, width = 4, height = 4)
+```
+
+
+```{r, include=FALSE}
+vbreak_vel_plot <- ggplot(movement_data_100, aes(x=release_speed, y = pfx_z_in)) +
+  geom_point() + 
+  geom_smooth(method="lm") + 
+    labs(title = "Vertical Break vs Pitching Velocity",
+                x = "Pitching Velocity",
+                y = "Induced Vertical Break")
+
+hbreak_vel_plot <- ggplot(movement_data_100, aes(x=release_speed, y = pfx_x_in_pv)) +
+  geom_point() + 
+  geom_smooth(method="lm") + 
+    labs(title = "Horizontal Break vs Pitching Velocity",
+                x = "Pitching Velocity",
+                y = "Horizontal Break")
+
+vbreak_spin_plot <- ggplot(movement_data_100, aes(x=release_spin_rate, y = pfx_z_in)) +
+  geom_point() + 
+  geom_smooth(method="lm") + 
+    labs(title = "Vertical Break vs Pitching Spin Rate",
+                x = "Pitching Spin Rate",
+                y = "Induced Vertical Break")
+
+hbreak_spin_plot <- ggplot(movement_data_100, aes(x=release_spin_rate, y = pfx_x_in_pv)) +
+  geom_point() + 
+  geom_smooth(method="lm") + 
+    labs(title = "Horizontal Break vs Pitching Spin Rate",
+                x = "Pitching Spin Rate",
+                y = "Horizontal Break")
+```
+
+```{r, include=FALSE}
+cor_plot <- grid.arrange(vbreak_vel_plot, hbreak_vel_plot, vbreak_spin_plot, hbreak_spin_plot, nrow = 2, ncol = 2)
+ggsave("cor_plot.png", plot = cor_plot, width = 4, height = 4)
+```
+
+```{r, include=TURE}
+cor(x = movement_data_100$release_speed, y = movement_data_100$pfx_z_in)
+cor(x = movement_data_100$release_speed, y = movement_data_100$pfx_x_in_pv)
+cor(x = movement_data_100$release_spin_rate, y = movement_data_100$pfx_z_in)
+cor(x = movement_data_100$release_spin_rate, y = movement_data_100$pfx_x_in_pv)
+cor(x = movement_data_100$spin_axis, y = movement_data_100$pfx_z_in)
+cor(x = movement_data_100$spin_axis, y = movement_data_100$pfx_x_in_pv)
+```
+The pitch speed and spin rate affect the ball's movement because ball's aerodynamic is heavily influenced by these two features. I compiled a list of the top 100 pitchers from the 2021 season using Bleacher Report’s rankings, and calculated the correlations between pitch speed/spin rate and horizontal/vertical movement. I set x-axis as pitch speed/spin rate and y-axis horizontal/vertical break. Below is a table of correlation:
+
+Pitching velocity has a strong correlation with vertical movement, and spin rate has a moderate correlation with horizontal break. For four-seam fastballs, higher velocities often correlate with increased backspin, which can result in less vertical drop, giving the illusion of the ball “rising” as it approaches the batter. This effect is due to the Magnus force acting against gravity, causing the ball to stay elevated longer. 
+
+Analyzing the average spin rates across various pitch types reveals that breaking balls, such as curveballs and sweepers, exhibit higher spin rates among the 100 RHP players studied. These elevated spin rates contribute to significant horizontal movement, causing the pitches to break toward or away from the batter as they approach home plate. This pronounced lateral movement is a defining characteristic of these pitch types.
+
+Moreover, the strong correlation between spin axis and horizontal movement highlights that the orientation of the ball’s spin determines the direction and magnitude of its lateral movement. This implies that a spin axis tilted at an angle can cause the ball to break horizontally, as seen in sliders or curveballs.
+
+```{r, include=FALSE}
+features <- movement_data %>% select(pfx_x_in_pv, pfx_z_in, release_speed, release_spin_rate, spin_axis)
+scaled_features <- scale(features)
+
+elbow_types <- fviz_nbclust(scaled_features, kmeans, method = "wss") + 
+  ggtitle("Elbow Method for Determining Optimal Clusters (Hyun-Jin Ryu)")
+ggsave("elbow_types.png", plot = elbow_types, width = 4, height = 4)
+
+kmeans_model <- kmeans(scaled_features, centers = 4, nstart = 25)
+movement_data$cluster_kmeans <- as.factor(kmeans_model$cluster)
+
+kmeans_plot <- ggplot(movement_data, aes(x = pfx_x_in_pv, y = pfx_z_in, color = cluster_kmeans)) +
+  geom_point(size = 3) +
+  labs(title = "K-Means Clustering of Pitches (Hyun-Jin Ryu)",
+       x = "Horizontal Movement", y = "Vertical Movement") +
+  theme_minimal()
+ggsave("kmeans_plot.png", plot = kmeans_plot, width = 6, height = 4)
+```
+
+This led me to conduct k-mean clustering algorithm with selecting features such as vertical/horizontal break, pitch velocity/spin rate, and spin axis. Hence I can experiment with different numbers of clusters to see how the groups form. I used Elbow Method to determine the optimal number of clusters for $k$-means.
+
+To assess the quality of cluster separation, I calculated the silhouette score and obtained a value of 0.61. This score suggests that the clusters are reasonably well-defined, as it indicates that, on average, samples are closer to their own cluster than to neighboring clusters. This is because silhouette scores range from -1 to 1, with higher values indicating better-defined clusters.
+
+```{r, include=FALSE}
+silhouette_kmeans <- silhouette(kmeans_model$cluster, dist(scaled_features))
+silhouette_plot <- fviz_silhouette(silhouette_kmeans)
+ggsave("silhouette_plot.png", plot = silhouette_plot, width = 4, height = 4)
+```
+
+Since pitch movement provides crucial insights into how each pitch type forms clusters in a 2D space, it is valuable for analyzing a pitcher’s arsenal. In a PCA analysis, I am interested in whether the principal components derived from multiple features can reveal groupings, allowing clusters to form that could reflect similar characteristics in players with similar pitching styles. This approach could highlight how additional features contribute to defining the components and potentially reveal patterns across players. 
+
+```{r}
+par(mfrow = c(1,2))
+summary(pc.cr <- princomp(scaled_features, cor = TRUE))
+
+plot(pc.cr) # shows a screeplot.
+biplot(pc.cr)
+
+pca_data <- as.data.frame(pc.cr$loadings[,1:2])
+```
+With two components explaining 94% of the variance, we can easily plot the data in a 2D space. As shown below, the points in the PCA plot form distinct groupings based on pitch type, indicating a clear pattern unique to each pitch in his arsenal.
+
+```{r}
+pca_scores <- as.data.frame(pc.cr$scores)
+pca_scores$pitch_name <- movement_data$pitch_name  # Add pitch name column
+
+pca_plot <- ggplot(pca_scores, aes(x = Comp.1, y = Comp.2, color = pitch_name)) +
+  geom_point(size = 3) +
+  labs(title = "Biplot of PCA with Pitch Type (Hyun-Jin Ryu)", x = "PC1", y = "PC2") +
+  theme_minimal()
+ggsave("pca_plot.png", plot = pca_plot, width = 6, height = 4)
+```
+
+The MLB Statcast suggests that the pitchers similar to Hyun-Jin Ryu based on Velocity and Movement are 2021-Tyler Gilbert, 2021-Sean Nolin, and 2018-Tyler Anderson.
+
+```{r}
+pitcher_id_Gilbert <- 656457
+pitch_data_Gilbert <- statcast_search_pitchers(start_date = "2021-03-01",
+                                                   end_date = "2021-12-01",
+                                                   pitcherid = pitcher_id_Gilbert)
+movement_data_Gilbert <- pitch_data_Gilbert %>% select(game_type, pitcher, player_name, pitch_name, spin_axis,
+                                          release_speed, release_spin_rate, pfx_x, pfx_z)
+
+
+movement_data_Gilbert <- movement_data_Gilbert %>% filter(!is.na(pfx_x), !is.na(pfx_z), 
+                                          !is.na(release_speed), !is.na(release_spin_rate),
+                                          !is.na(pitch_name), !is.na(spin_axis), game_type == "R") %>% 
+  mutate(pfx_x_in_pv = -12*pfx_x, pfx_z_in = 12*pfx_z)
+
+movement_data_Gilbert %>% group_by(pitch_name) %>% summarise(count = n()) %>% 
+  mutate(percentage = (count / sum(count)) * 100)
+
+excluded_pitches <- c("Slider", "Sinker") 
+movement_data_Gilbert <- movement_data_Gilbert %>% filter(!pitch_name %in% excluded_pitches)
+
+```
+
+
+```{r}
+features_Gilbert <- movement_data_Gilbert %>% select(pfx_x_in_pv, pfx_z_in, release_speed, release_spin_rate, spin_axis)
+scaled_features_Gilbert <- scale(features_Gilbert)
+
+summary(pc.cr_Gilbert <- princomp(scaled_features_Gilbert, cor = TRUE))
+
+plot(pc.cr_Gilbert) # shows a screeplot.
+biplot(pc.cr_Gilbert)
+
+pca_data_Gilbert <- as.data.frame(pc.cr_Gilbert$loadings[,1:2])
+
+pca_scores_Gilbert <- as.data.frame(pc.cr_Gilbert$scores)
+pca_scores_Gilbert$pitch_name <- movement_data_Gilbert$pitch_name  # Add pitch name column
+
+pca_plot_Gilbert <- ggplot(pca_scores_Gilbert, aes(x = Comp.1, y = Comp.2, color = pitch_name)) +
+  geom_point(size = 3) +
+  labs(title = "Biplot of PCA with Pitch Type (Tyler Gilbert)", x = "PC1", y = "PC2") +
+  theme_minimal()
+ggsave("pca_plot_Gilbert.png", plot=pca_plot_Gilbert, width=6, height = 4)
+```
+
+
